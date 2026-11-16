@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>반티 투표</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@500;800&display=swap">
+<link rel="stylesheet" href="/style.css?v=1">
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<div class="bar" id="bar" style="display:none"></div>
+<script>
+const app = document.getElementById("app");
+const bar = document.getElementById("bar");
+let num = null;
+try { num = Number(localStorage.getItem("vote-num")) || null; } catch {}
+let st = null, picked = [], lastRoundKey = "", sending = false, err = "";
+
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const img = (u) => `background-image:url('${encodeURI(u)}')`;
+
+function login() {
+  if (document.getElementById("n")) return; // 입력 중인 칸을 지우지 않는다
+  bar.style.display = "none";
+  app.innerHTML = `<div class="center">
+    <h1>우리 반 <span>반티</span> 투표 👕</h1>
+    <div class="big">내 번호를 입력하세요</div>
+    <input id="n" type="number" inputmode="numeric" min="1" style="font-size:32px;width:160px;text-align:center">
+    <button id="go" style="font-size:22px">입장하기</button>
+    <div class="err" id="e"></div></div>`;
+  const n = document.getElementById("n");
+  n.focus();
+  const go = () => {
+    const v = Number(n.value);
+    const max = st && st.total ? st.total : 40;
+    if (!Number.isInteger(v) || v < 1 || v > max) { document.getElementById("e").textContent = `1~${max} 사이 번호를 넣어 주세요`; return; }
+    num = v;
+    try { localStorage.setItem("vote-num", String(v)); } catch {}
+    poll();
+  };
+  document.getElementById("go").onclick = go;
+  n.onkeydown = (e) => { if (e.key === "Enter") go(); };
+}
+
+function header() {
+  return `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+    <h1>우리 반 <span>반티</span> 투표 👕</h1>
+    <span class="pill">${num}번 <a href="#" id="out" style="color:var(--sub);margin-left:6px">바꾸기</a></span></div>`;
+}
+
+function results(counts, mode) {
+  const max = Math.max(1, ...Object.values(counts));
+  const rows = st.items.slice().sort((a, b) => counts[b.id] - counts[a.id]).map((it) =>
+    `<div class="row ${mode === "exclude" ? "ex" : ""}"><div class="thumb" style="${img(it.img)}"></div><div class="nm">${esc(it.name)}</div>
+     <div class="track"><div class="fill" style="width:${(counts[it.id] / max) * 100}%"></div></div><div class="ct">${counts[it.id]}</div></div>`).join("");
+  return `<div class="res">${rows}</div>`;
+}
+
+function render() {
+  if (!num) return login();
+  if (!st || !st.ready) { bar.style.display = "none"; app.innerHTML = header() + `<div class="center"><div class="big">선생님이 투표를 준비하고 있어요 ⏳</div></div>`; bindOut(); return; }
+  if (st.winner) {
+    bar.style.display = "none";
+    app.innerHTML = header() + `<div class="center"><div class="big">🎉 우리 반 반티는</div>
+      <div class="card" style="width:min(320px,80vw)"><div class="img" style="${img(st.winner.img)}"></div><div class="name" style="font-size:28px">${esc(st.winner.name)}</div></div></div>`;
+    bindOut(); return;
+  }
+  const r = st.round;
+  if (!r) {
+    bar.style.display = "none";
+    app.innerHTML = header() + `<p class="sub">다음 투표를 기다려요 ⏳ 남은 반티 ${st.items.length}개</p>
+      <div class="grid">${st.items.map(cardHtml).join("")}</div>`;
+    bindOut(); return;
+  }
+  const ex = r.mode === "exclude";
+  const title = st.items.length === 2 && !ex ? "양자택일! 하나만 고르세요" : ex ? `빼고 싶은 반티 ${r.picks}개를 고르세요` : `마음에 드는 반티 ${r.picks}개를 고르세요`;
+  if (!r.open) {
+    bar.style.display = "none";
+    app.innerHTML = header() + `<p class="sub">${r.n}라운드 마감! ${ex ? "빼고 싶은 표" : "받은 표"}</p>` + (st.counts ? results(st.counts, r.mode) : "");
+    bindOut(); return;
+  }
+  app.innerHTML = header() + `<p class="sub"><b style="color:${ex ? "var(--bad)" : "var(--acc)"}">${r.n}라운드</b> · ${title}</p>
+    <p class="sub" style="font-size:15px">사진을 눌러 고르고, ↗를 누르면 쇼핑몰에서 자세히 볼 수 있어요.</p>
+    <div class="grid">${st.items.map((it) => cardHtml(it, true, ex)).join("")}</div>` + (st.counts ? `<p class="sub" style="margin-top:24px">지금까지 결과 (${st.voted}명 참여)</p>` + results(st.counts, r.mode) : "");
+  bindOut();
+  app.querySelectorAll(".card[data-id]").forEach((c) => c.onclick = (e) => {
+    if (e.target.closest("a")) return;
+    const id = c.dataset.id;
+    if (picked.includes(id)) picked = picked.filter((x) => x !== id);
+    else { if (r.picks === 1) picked = [id]; else if (picked.length < r.picks) picked.push(id); }
+    render();
+  });
+  const done = st.mine && same(st.mine, picked);
+  bar.style.display = "flex";
+  bar.innerHTML = `<span class="msg">${done ? "✅ 투표했어요! 바꾸려면 다시 고르세요" : `${picked.length} / ${r.picks}개 골랐어요`}</span>
+    <button id="send" ${picked.length !== r.picks || done || sending ? "disabled" : ""}>${st.mine ? "다시 투표" : "투표하기"}</button>
+    <span class="err">${esc(err)}</span>`;
+  document.getElementById("send").onclick = send;
+}
+
+const same = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
+
+function cardHtml(it, selectable, ex) {
+  const sel = selectable && picked.includes(it.id);
+  return `<div class="card ${sel ? "sel" : ""} ${ex ? "ex" : ""}" ${selectable ? `data-id="${it.id}"` : ""}>
+    <div class="img" style="${img(it.img)}"></div><div class="name">${esc(it.name)}</div>
+    <span class="badge">${ex ? "빼기" : "선택"}</span>
+    <a class="more" href="${esc(it.url)}" target="_blank" rel="noopener">↗</a></div>`;
+}
+
+function bindOut() {
+  const o = document.getElementById("out");
+  if (o) o.onclick = (e) => { e.preventDefault(); num = null; try { localStorage.removeItem("vote-num"); } catch {} render(); };
+}
+
+async function send() {
+  sending = true; err = ""; render();
+  try {
+    const res = await fetch("/api/vote", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ num, ids: picked }) });
+    const d = await res.json();
+    if (!res.ok) err = d.error || "다시 해 주세요";
+  } catch { err = "인터넷을 확인해 주세요"; }
+  sending = false;
+  await poll(true);
+}
+
+async function poll(force) {
+  try {
+    const res = await fetch("/api/state?num=" + (num || ""));
+    st = await res.json();
+    const key = st.round ? st.round.n + ":" + st.round.open : "none";
+    if (key !== lastRoundKey) { picked = st.mine ? [...st.mine] : []; lastRoundKey = key; err = ""; }
+    else if (force && st.mine) picked = [...st.mine];
+  } catch {}
+  // 고르는 중에는 화면을 다시 그리지 않아도 되지만, 상태 변화는 반영한다
+  render();
+}
+poll();
+setInterval(() => { if (!sending) poll(); }, 2000);
+</script>
+</body>
+</html>

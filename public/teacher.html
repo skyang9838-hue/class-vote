@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>반티 투표 · 선생님</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@500;800&display=swap">
+<link rel="stylesheet" href="/style.css?v=1">
+<style>
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px; margin-top:16px; display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+  .panel label { display:flex; gap:8px; align-items:center; font-weight:800; }
+  .nums { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .nums span { width:38px; height:38px; display:grid; place-items:center; border-radius:10px; background:var(--card); border:1px solid var(--line); font-weight:800; }
+  .nums span.on { background:var(--good); color:var(--bg); border-color:var(--good); }
+  .row { cursor:default; }
+  .row.pickable { cursor:pointer; }
+  .hist { margin-top:24px; color:var(--sub); }
+  .hist li { margin:6px 0 0 20px; }
+  .join { font-size:clamp(20px, 3vw, 30px); font-weight:800; }
+  .join b { color:var(--acc); }
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script>
+const app = document.getElementById("app");
+let key = null;
+try { key = new URLSearchParams(location.search).get("key") || localStorage.getItem("vote-key"); } catch {}
+let st = null, err = "";
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const img = (u) => `background-image:url('${encodeURI(u)}')`;
+const joinUrl = location.origin;
+
+async function admin(action, extra = {}) {
+  err = "";
+  const res = await fetch("/api/admin", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, key, ...extra }) });
+  const d = await res.json();
+  if (!res.ok) err = d.error || "실패";
+  return d;
+}
+
+async function first() {
+  const pub = await (await fetch("/api/state")).json();
+  if (pub.ready && !key) {
+    app.innerHTML = `<div class="center"><h1>반티 투표 · <span>선생님</span></h1>
+      <div class="big">이미 만든 투표가 있어요. 열쇠를 넣어 주세요</div>
+      <input id="k" style="width:260px;text-align:center"><button id="go">들어가기</button></div>`;
+    document.getElementById("go").onclick = () => { key = document.getElementById("k").value.trim(); save(); load(); };
+    return;
+  }
+  if (!pub.ready) {
+    app.innerHTML = `<div class="center"><h1>반티 투표 · <span>선생님</span></h1>
+      <div class="big">우리 반 인원</div><input id="t" type="number" value="23" style="width:120px;text-align:center;font-size:28px">
+      <button id="mk">투표 만들기</button></div>`;
+    document.getElementById("mk").onclick = async () => {
+      const d = await admin("create", { total: Number(document.getElementById("t").value) });
+      if (d.key) { key = d.key; save(); load(); } else alert(err);
+    };
+    return;
+  }
+  load();
+}
+function save() { try { localStorage.setItem("vote-key", key); } catch {} }
+
+async function load() {
+  const res = await fetch("/api/admin-state?key=" + encodeURIComponent(key));
+  if (!res.ok) { key = null; try { localStorage.removeItem("vote-key"); } catch {} return first(); }
+  st = await res.json();
+  render();
+}
+
+function results(r) {
+  const counts = st.counts;
+  const alive = st.items.filter((i) => st.alive.includes(i.id));
+  const max = Math.max(1, ...Object.values(counts));
+  const p = r.proposal;
+  return `<div class="res">` + alive.slice().sort((a, b) => counts[b.id] - counts[a.id]).map((it) => {
+    const cls = [r.mode === "exclude" ? "ex" : "", p ? (p.survivors.includes(it.id) ? "keep pickable" : "out pickable") : ""].join(" ");
+    const tie = p && p.ties.includes(it.id) ? " <span style='color:var(--acc);font-size:15px'>동점</span>" : "";
+    return `<div class="row ${cls}" data-id="${it.id}"><div class="thumb" style="${img(it.img)}"></div><div class="nm">${esc(it.name)}${tie}</div>
+      <div class="track"><div class="fill" style="width:${(counts[it.id] / max) * 100}%"></div></div><div class="ct">${counts[it.id]}</div></div>`;
+  }).join("") + `</div>`;
+}
+
+function render() {
+  const r = st.round;
+  const alive = st.items.filter((i) => st.alive.includes(i.id));
+  const n = alive.length;
+  let html = `<div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-end">
+    <h1>우리 반 <span>반티</span> 투표 👕</h1>
+    <div class="join">입장: <b>is.gd/banti63</b> → 번호 입력</div></div>`;
+
+  if (n === 1 && !r) {
+    const w = alive[0];
+    html += `<div class="center"><div class="big">🎉 우리 반 반티는</div>
+      <div class="card" style="width:min(360px,80vw)"><div class="img" style="${img(w.img)}"></div><div class="name" style="font-size:32px">${esc(w.name)}</div></div></div>`;
+  } else if (!r) {
+    // 다음 라운드 설정. 남은 수에 맞춰 기본값을 고른다 (8→5 제외, 5→2 선택, 2→1 양자택일)
+    const defMode = n > 5 ? "exclude" : "pick";
+    const defKeep = n > 5 ? n - 3 : n > 2 ? 2 : 1;
+    const defPicks = n > 5 ? 3 : 1;
+    html += `<p class="sub">남은 반티 ${n}개 · ${st.roundNo + 1}라운드 준비</p>
+      <div class="panel">
+        <label>방식 <select id="mode"><option value="exclude" ${defMode === "exclude" ? "selected" : ""}>빼고 싶은 것 고르기 (제외 투표)</option><option value="pick" ${defMode === "pick" ? "selected" : ""}>좋은 것 고르기</option></select></label>
+        <label>한 명이 <input id="picks" type="number" min="1" max="${n - 1}" value="${defPicks}" style="width:70px">개 고르기</label>
+        <label>끝나면 <input id="keep" type="number" min="1" max="${n - 1}" value="${defKeep}" style="width:70px">개 남기기</label>
+        <label><input id="reveal" type="checkbox"> 투표 중에도 결과 보이기</label>
+        <button id="start">${st.roundNo + 1}라운드 시작</button>
+      </div>
+      <div class="grid">${alive.map((it) => `<div class="card"><div class="img" style="${img(it.img)}"></div><div class="name">${esc(it.name)}</div></div>`).join("")}</div>`;
+  } else {
+    const ex = r.mode === "exclude";
+    const label = n === 2 && !ex ? "양자택일" : ex ? `빼고 싶은 것 ${r.picks}개 고르기` : `좋은 것 ${r.picks}개 고르기`;
+    html += `<p class="sub"><b style="color:${ex ? "var(--bad)" : "var(--acc)"}">${r.n}라운드</b> · ${label} → ${r.keep}개 남김 · ${r.open ? "투표 중" : "마감"}</p>
+      <div class="panel">
+        <span class="big">${st.votedNums.length} / ${st.total}명</span>
+        ${r.open ? `<button id="close">마감하기</button><button class="ghost" id="reveal">${r.reveal ? "결과 가리기" : "결과 보이기"}</button>`
+                 : `<button id="next">이대로 다음 단계 (${r.proposal.survivors.length}개 남김)</button><button class="ghost" id="reopen">다시 열기</button>`}
+      </div>
+      <div class="nums">${Array.from({ length: st.total }, (_, i) => i + 1).map((k) => `<span class="${st.votedNums.includes(k) ? "on" : ""}">${k}</span>`).join("")}</div>`;
+    if (!r.open || r.reveal) {
+      html += (!r.open ? `<p class="sub" style="margin-top:16px">✅ = 남는 반티. 줄을 누르면 남김/뺌을 바꿀 수 있어요${r.proposal.ties.length ? " (동점 있음 — 직접 골라 주세요)" : ""}.</p>` : "") + results(r);
+    } else {
+      html += `<div class="center" style="min-height:30vh"><div class="big">결과는 마감하면 보여요 🙈</div></div>`;
+    }
+  }
+
+  if (st.history.length) {
+    html += `<div class="hist"><b>지난 라운드</b><ul>` + st.history.map((h) =>
+      `<li>${h.n}라운드 (${h.mode === "exclude" ? "제외" : "선택"}, ${h.voted}명): ` +
+      Object.entries(h.counts).sort((a, b) => b[1] - a[1]).map(([id, c]) => `${esc(st.items.find((i) => i.id === id).name)} ${c}${h.survivors.includes(id) ? "" : " ✕"}`).join(" · ") + `</li>`).join("") + `</ul></div>`;
+  }
+  html += `<div class="panel" style="margin-top:32px;opacity:.7"><span>열쇠: <b>${esc(key)}</b> (다른 컴에서 선생님 화면 열 때)</span>
+    <button class="ghost" id="reset">처음부터 다시</button><span class="err">${esc(err)}</span></div>`;
+  app.innerHTML = html;
+
+  const on = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = async () => { await fn(); await load(); }; };
+  on("start", () => admin("start", { mode: document.getElementById("mode").value, picks: Number(document.getElementById("picks").value), keep: Number(document.getElementById("keep").value), reveal: document.getElementById("reveal").checked }));
+  on("close", () => admin("close"));
+  on("reveal", () => admin("reveal"));
+  on("next", () => admin("next"));
+  on("reopen", () => admin("reopen"));
+  const rs = document.getElementById("reset");
+  if (rs) rs.onclick = async () => { if (confirm("투표를 처음부터 다시 할까요? 결과가 모두 지워져요.")) { await admin("reset"); load(); } };
+  app.querySelectorAll(".row.pickable").forEach((row) => row.onclick = async () => { await admin("toggle", { id: row.dataset.id }); load(); });
+}
+
+first();
+// 설정 칸을 고치는 중에는 새로 그리지 않는다
+setInterval(() => { if (st && st.round && key && !document.activeElement.matches("input,select")) load(); }, 2000);
+</script>
+</body>
+</html>
