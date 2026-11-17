@@ -6,5 +6,6 @@
 
 **주의**
 - 배포는 `npx wrangler deploy` (Cloudflare Workers + Durable Object 하나 "main"). GitHub push만으로는 배포 안 됨. 이 컴은 class-soccer의 wrangler로 돌림: `node ..\class-soccer\node_modules\wrangler\bin\wrangler.js deploy`.
-- 선생님 열쇠는 투표를 만들 때 한 번 나오고 그 브라우저 localStorage에 저장된다. "처음부터 다시"는 결과만 지우고 열쇠는 그대로.
+- 11/17부터 선생님 화면은 열쇠 없이 열린다 (사용자: 어차피 나만 연다). 번호는 0~total(지금 25).
+- 후보 사진은 `src/items.js`가 기준 — 서버 상태의 items는 불러올 때마다 덮어쓴다. 패들렛 미리보기 주소는 깨지니 쇼핑몰 원본 사진 주소를 쓴다.
 - 수업 중 배포해도 상태(DO 저장소)는 남지만, 화면이 잠깐 끊길 수 있다.
