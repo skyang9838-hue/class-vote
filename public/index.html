@@ -14,7 +14,7 @@
 const app = document.getElementById("app");
 const bar = document.getElementById("bar");
 let num = null;
-try { num = Number(localStorage.getItem("vote-num")) || null; } catch {}
+try { const v = localStorage.getItem("vote-num"); num = v === null || v === "" ? null : Number(v); } catch {}
 let st = null, picked = [], lastRoundKey = "", sending = false, err = "";
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -26,15 +26,15 @@ function login() {
   app.innerHTML = `<div class="center">
     <h1>우리 반 <span>반티</span> 투표 👕</h1>
     <div class="big">내 번호를 입력하세요</div>
-    <input id="n" type="number" inputmode="numeric" min="1" style="font-size:32px;width:160px;text-align:center">
+    <input id="n" type="number" inputmode="numeric" min="0" style="font-size:32px;width:160px;text-align:center">
     <button id="go" style="font-size:22px">입장하기</button>
     <div class="err" id="e"></div></div>`;
   const n = document.getElementById("n");
   n.focus();
   const go = () => {
-    const v = Number(n.value);
+    const v = n.value.trim() === "" ? NaN : Number(n.value);
     const max = st && st.total ? st.total : 40;
-    if (!Number.isInteger(v) || v < 1 || v > max) { document.getElementById("e").textContent = `1~${max} 사이 번호를 넣어 주세요`; return; }
+    if (!Number.isInteger(v) || v < 0 || v > max) { document.getElementById("e").textContent = `0~${max} 사이 번호를 넣어 주세요`; return; }
     num = v;
     try { localStorage.setItem("vote-num", String(v)); } catch {}
     poll();
@@ -58,7 +58,7 @@ function results(counts, mode) {
 }
 
 function render() {
-  if (!num) return login();
+  if (num === null) return login();
   if (!st || !st.ready) { bar.style.display = "none"; app.innerHTML = header() + `<div class="center"><div class="big">선생님이 투표를 준비하고 있어요 ⏳</div></div>`; bindOut(); return; }
   if (st.winner) {
     bar.style.display = "none";
@@ -127,7 +127,7 @@ async function send() {
 
 async function poll(force) {
   try {
-    const res = await fetch("/api/state?num=" + (num || ""));
+    const res = await fetch("/api/state?num=" + (num === null ? "" : num));
     st = await res.json();
     const key = st.round ? st.round.n + ":" + st.round.open : "none";
     if (key !== lastRoundKey) { picked = st.mine ? [...st.mine] : []; lastRoundKey = key; err = ""; }

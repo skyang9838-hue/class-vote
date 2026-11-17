@@ -56,6 +56,7 @@ export class VoteRoom {
 
   async load() {
     if (!this.state) this.state = (await this.ctx.storage.get("s")) || null;
+    if (this.state) this.state.items = ITEMS;
     return this.state;
   }
   async save() {
@@ -103,7 +104,7 @@ export class VoteRoom {
     }
 
     if (req.method === "GET" && path === "/api/admin-state") {
-      if (!s || url.searchParams.get("key") !== s.adminKey) return json({ error: "열쇠가 맞지 않아요" }, 403);
+      if (!s) return json({ error: "투표가 없어요" }, 403);
       const r = s.round;
       return json({
         ...s,
@@ -119,7 +120,7 @@ export class VoteRoom {
     if (path === "/api/vote") {
       if (!s || !s.round || !s.round.open) return json({ error: "지금은 투표 시간이 아니에요" }, 400);
       const num = Number(body.num);
-      if (!Number.isInteger(num) || num < 1 || num > s.total) return json({ error: "번호를 확인해 주세요" }, 400);
+      if (!Number.isInteger(num) || num < 0 || num > s.total) return json({ error: "번호를 확인해 주세요" }, 400);
       const ids = [...new Set(Array.isArray(body.ids) ? body.ids : [])].filter((id) => s.alive.includes(id));
       if (ids.length !== s.round.picks) return json({ error: `${s.round.picks}개를 골라 주세요` }, 400);
       s.votes[num] = ids;
@@ -130,13 +131,13 @@ export class VoteRoom {
     if (path === "/api/admin") {
       const { action } = body;
       if (action === "create") {
-        if (s) return json({ error: "이미 투표가 있어요. 열쇠로 들어오세요" }, 400);
+        if (s) return json({ ok: true, key: s.adminKey });
         const key = randKey();
         this.state = this.fresh(key, Math.max(1, Math.min(40, Number(body.total) || 23)));
         await this.save();
         return json({ ok: true, key });
       }
-      if (!s || body.key !== s.adminKey) return json({ error: "열쇠가 맞지 않아요" }, 403);
+      if (!s) return json({ error: "투표가 없어요" }, 403);
 
       if (action === "reset") {
         this.state = this.fresh(s.adminKey, s.total);

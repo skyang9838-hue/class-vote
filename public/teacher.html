@@ -25,7 +25,7 @@
 <script>
 const app = document.getElementById("app");
 let key = null;
-try { key = new URLSearchParams(location.search).get("key") || localStorage.getItem("vote-key"); } catch {}
+try { key = new URLSearchParams(location.search).get("key") || localStorage.getItem("vote-key") || "open"; } catch {}
 let st = null, err = "";
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const img = (u) => `background-image:url('${encodeURI(u)}')`;
@@ -117,7 +117,7 @@ function render() {
         ${r.open ? `<button id="close">마감하기</button><button class="ghost" id="reveal">${r.reveal ? "결과 가리기" : "결과 보이기"}</button>`
                  : `<button id="next">이대로 다음 단계 (${r.proposal.survivors.length}개 남김)</button><button class="ghost" id="reopen">다시 열기</button>`}
       </div>
-      <div class="nums">${Array.from({ length: st.total }, (_, i) => i + 1).map((k) => `<span class="${st.votedNums.includes(k) ? "on" : ""}">${k}</span>`).join("")}</div>`;
+      <div class="nums">${Array.from({ length: st.total + 1 }, (_, i) => i).map((k) => `<span class="${st.votedNums.includes(k) ? "on" : ""}">${k}</span>`).join("")}</div>`;
     if (!r.open || r.reveal) {
       html += (!r.open ? `<p class="sub" style="margin-top:16px">✅ = 남는 반티. 줄을 누르면 남김/뺌을 바꿀 수 있어요${r.proposal.ties.length ? " (동점 있음 — 직접 골라 주세요)" : ""}.</p>` : "") + results(r);
     } else {
