@@ -56,18 +56,20 @@ export class VoteRoom {
 
   async load() {
     if (!this.state) this.state = (await this.ctx.storage.get("s")) || null;
-    if (this.state && !this.state.items) this.state.items = ITEMS;
+    // v2: 옛 반티 데이터는 싹 지운다
+    if (this.state && this.state.v !== 2) { await this.ctx.storage.deleteAll(); this.state = null; }
     return this.state;
   }
   async save() {
     await this.ctx.storage.put("s", this.state);
   }
 
-  fresh(pin, total, items = ITEMS) {
+  fresh(pin, total, items = [], topic = "") {
     return {
+      v: 2,
       pin,
       total,
-      title: "우리 반 반티 투표",
+      topic,
       items,
       alive: items.map((i) => i.id),
       announced: false,
@@ -78,15 +80,23 @@ export class VoteRoom {
     };
   }
 
+  async putImg(id, data) {
+    if (typeof data !== "string" || !/^data:image\/(jpeg|png|webp|gif);base64,/.test(data)) return json({ error: "사진 형식이 아니에요" }, 400);
+    if (data.length > 1500000) return json({ error: "사진이 너무 커요" }, 400);
+    await this.ctx.storage.put("img:" + id, data);
+    return null;
+  }
+
   publicView(s, num) {
     if (!s) return { ready: false };
     const r = s.round;
     const out = {
       ready: true,
-      title: s.title,
+      topic: s.topic,
       total: s.total,
       items: s.items.filter((i) => s.alive.includes(i.id)),
       hasPin: !!s.pin,
+      done: s.history.length > 0 && s.alive.length === 1 && !r,
       // 1등은 선생님이 "발표"를 눌러야 아이들 화면에 뜬다
       winner: s.announced && s.alive.length === 1 && !r ? s.items.find((i) => i.id === s.alive[0]) : null,
       round: r && { n: r.n, mode: r.mode, picks: r.picks, keep: r.keep, open: r.open },
@@ -101,6 +111,13 @@ export class VoteRoom {
     const url = new URL(req.url);
     const path = url.pathname;
     const s = await this.load();
+
+    if (req.method === "GET" && path.startsWith("/api/img/")) {
+      const data = await this.ctx.storage.get("img:" + path.slice(9));
+      if (!data) return new Response("없음", { status: 404 });
+      const bin = Uint8Array.from(atob(data.split(",")[1]), (c) => c.charCodeAt(0));
+      return new Response(bin, { headers: { "content-type": data.slice(5, data.indexOf(";")), "cache-control": "public, max-age=31536000" } });
+    }
 
     if (req.method === "GET" && path === "/api/state") {
       return json(this.publicView(s, url.searchParams.get("num")));
@@ -156,10 +173,11 @@ export class VoteRoom {
       if (!s || !s.pin || body.key !== s.pin) return json({ error: "비밀번호가 맞지 않아요" }, 403);
 
       if (action === "reset") {
-        this.state = this.fresh(s.pin, s.total, s.items);
+        this.state = this.fresh(s.pin, s.total, s.items, s.topic);
       } else if (action === "total") {
         s.total = Math.max(1, Math.min(40, Number(body.total) || s.total));
       } else if (action === "start") {
+        if (s.alive.length < 2) return json({ error: "항목을 2개 이상 넣어 주세요" }, 400);
         if (s.round) return json({ error: "진행 중인 라운드를 먼저 끝내 주세요" }, 400);
         const mode = body.mode === "exclude" ? "exclude" : "pick";
         const n = s.alive.length;
@@ -170,6 +188,37 @@ export class VoteRoom {
         s.votes = {};
       } else if (action === "announce") {
         s.announced = !s.announced;
+      } else if (action === "topic") {
+        s.topic = String(body.topic || "").trim().slice(0, 40);
+      } else if (action === "additem") {
+        if (s.round) return json({ error: "라운드가 끝난 뒤에 고칠 수 있어요" }, 400);
+        const id = "i" + randKey().slice(0, 8);
+        const it = { id, name: String(body.name || "").trim().slice(0, 40), url: "", img: "" };
+        if (body.img) {
+          const r = await this.putImg(id, body.img);
+          if (r) return r;
+          it.img = "/api/img/" + id + "?v=" + Date.now();
+        }
+        s.items.push(it);
+        s.alive.push(id);
+        await this.save();
+        return json({ ok: true, id });
+      } else if (action === "delitem") {
+        if (s.round) return json({ error: "라운드가 끝난 뒤에 고칠 수 있어요" }, 400);
+        s.items = s.items.filter((i) => i.id !== body.id);
+        s.alive = s.alive.filter((i) => i !== body.id);
+        await this.ctx.storage.delete("img:" + body.id);
+      } else if (action === "renitem") {
+        const it = s.items.find((i) => i.id === body.id);
+        if (it) it.name = String(body.name || "").trim().slice(0, 40);
+      } else if (action === "imgitem") {
+        const it = s.items.find((i) => i.id === body.id);
+        if (!it) return json({ error: "없는 항목" }, 400);
+        if (body.img) {
+          const r = await this.putImg(it.id, body.img);
+          if (r) return r;
+          it.img = "/api/img/" + it.id + "?v=" + Date.now();
+        } else { it.img = ""; await this.ctx.storage.delete("img:" + it.id); }
       } else if (action === "items") {
         // 항목 편집: 투표 중이 아닐 때만. 새 항목은 남은 후보에 넣고, 지운 항목은 뺀다
         if (s.round) return json({ error: "라운드가 끝난 뒤에 고칠 수 있어요" }, 400);
@@ -195,7 +244,7 @@ export class VoteRoom {
         p.survivors = p.survivors.includes(id) ? p.survivors.filter((x) => x !== id) : [...p.survivors, id];
       } else if (action === "next") {
         const p = s.round && s.round.proposal;
-        if (!p || p.survivors.length < 1) return json({ error: "남길 반티가 없어요" }, 400);
+        if (!p || p.survivors.length < 1) return json({ error: "남길 항목이 없어요" }, 400);
         s.history.push({
           n: s.round.n,
           mode: s.round.mode,

@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>반티 투표 · 선생님</title>
+<title>우리 반 투표 · 선생님</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@500;800&display=swap">
-<link rel="stylesheet" href="/style.css?v=1">
+<link rel="stylesheet" href="/style.css?v=2">
 <style>
   .panel { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px; margin-top:16px; display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
   .panel label { display:flex; gap:8px; align-items:center; font-weight:800; }
@@ -18,6 +18,14 @@
   .hist li { margin:6px 0 0 20px; }
   .join { font-size:clamp(20px, 3vw, 30px); font-weight:800; }
   .join b { color:var(--acc); }
+  .card .x { position:absolute; top:6px; right:6px; width:30px; height:30px; padding:0; border-radius:8px; background:rgba(0,0,0,.65); color:#fff; font-size:16px; z-index:2; }
+  .card.ed { cursor:pointer; }
+  .card.ed.on { border-color:var(--acc); }
+  .card .name[contenteditable] { outline:none; cursor:text; }
+  .card.add { border:3px dashed var(--line); background:transparent; min-height:160px; justify-content:center; align-items:center; gap:10px; padding:12px; }
+  .card.add input { width:100%; text-align:center; }
+  .hint { color:var(--sub); font-size:15px; margin-top:8px; }
+  .topicin { font-size:20px; width:min(420px, 100%); }
 </style>
 </head>
 <body>
@@ -30,6 +38,8 @@ let st = null, err = "", editing = false, draft = [];
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const img = (u) => `background-image:url('${encodeURI(u)}')`;
 const joinUrl = location.origin;
+const JOIN = "is.gd/vote63";
+let selId = null; // 사진을 붙여 넣을 카드
 
 async function admin(action, extra = {}) {
   err = "";
@@ -42,7 +52,7 @@ async function admin(action, extra = {}) {
 async function first() {
   const pub = await (await fetch("/api/state")).json();
   if (pub.ready && !pub.hasPin) {
-    app.innerHTML = `<div class="center"><h1>반티 투표 · <span>선생님</span></h1>
+    app.innerHTML = `<div class="center"><h1>우리 반 투표 · <span>선생님</span></h1>
       <div class="big">선생님 비밀번호를 정해 주세요</div><p class="sub">4자 이상. 이 브라우저는 기억해요</p>
       <input id="k" type="password" style="width:260px;text-align:center"><button id="go">정하기</button><span class="err" id="e"></span></div>`;
     document.getElementById("go").onclick = async () => {
@@ -52,7 +62,7 @@ async function first() {
     return;
   }
   if (pub.ready && !key) {
-    app.innerHTML = `<div class="center"><h1>반티 투표 · <span>선생님</span></h1>
+    app.innerHTML = `<div class="center"><h1>우리 반 투표 · <span>선생님</span></h1>
       <div class="big">선생님 비밀번호</div>
       <input id="k" type="password" style="width:260px;text-align:center"><button id="go">들어가기</button></div>`;
     const go = () => { key = document.getElementById("k").value.trim(); save(); load(); };
@@ -61,12 +71,14 @@ async function first() {
     return;
   }
   if (!pub.ready) {
-    app.innerHTML = `<div class="center"><h1>반티 투표 · <span>선생님</span></h1>
+    app.innerHTML = `<div class="center"><h1>우리 반 투표 · <span>선생님</span></h1>
+      <div class="big">무엇을 정하나요? <span class="hint">(안 써도 돼요)</span></div><input id="tp" class="topicin" placeholder="예: 현장체험 장소" style="text-align:center">
       <div class="big">마지막 번호</div><input id="t" type="number" value="25" style="width:120px;text-align:center;font-size:28px">
       <div class="big">선생님 비밀번호</div><input id="p" type="password" style="width:200px;text-align:center">
       <button id="mk">투표 만들기</button></div>`;
     document.getElementById("mk").onclick = async () => {
       const d = await admin("create", { total: Number(document.getElementById("t").value), pin: document.getElementById("p").value.trim() });
+      if (d.key) { key = d.key; save(); await admin("topic", { topic: document.getElementById("tp").value }); load(); return; }
       if (d.key) { key = d.key; save(); load(); } else alert(err);
     };
     return;
@@ -112,19 +124,80 @@ function renderEdit() {
   document.getElementById("savei").onclick = async () => { sync(); await admin("items", { items: draft }); if (!err) { editing = false; await load(); } else renderEdit(); };
 }
 
+// 사진을 줄여 jpeg 글자로 바꾼다 (긴 변 480px)
+function shrink(file) {
+  return new Promise((ok, no) => {
+    const im = new Image();
+    im.onload = () => {
+      const k = Math.min(1, 480 / Math.max(im.width, im.height));
+      const cv = document.createElement("canvas");
+      cv.width = Math.round(im.width * k); cv.height = Math.round(im.height * k);
+      const g = cv.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, cv.width, cv.height);
+      g.drawImage(im, 0, 0, cv.width, cv.height);
+      URL.revokeObjectURL(im.src);
+      ok(cv.toDataURL("image/jpeg", 0.85));
+    };
+    im.onerror = no;
+    im.src = URL.createObjectURL(file);
+  });
+}
+
+function bindEdit() {
+  const tp = document.getElementById("topic");
+  if (tp) tp.onchange = async () => { await admin("topic", { topic: tp.value }); };
+  const an = document.getElementById("addname");
+  if (an) an.onkeydown = async (e) => {
+    if (e.key !== "Enter" || e.isComposing) return;
+    // 여러 줄을 붙여 넣었으면 줄마다 하나씩
+    const names = an.value.split(/\n|\t/).map((x) => x.trim()).filter(Boolean);
+    if (!names.length) return;
+    for (const nm of names) await admin("additem", { name: nm });
+    await load();
+    const a2 = document.getElementById("addname"); if (a2) a2.focus();
+  };
+  if (an) an.addEventListener("paste", (e) => {
+    const txt = e.clipboardData.getData("text");
+    if (txt && /\n/.test(txt.trim())) { e.preventDefault(); an.value = txt; an.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" })); }
+  });
+  app.querySelectorAll("[data-del]").forEach((b) => b.onclick = async (e) => {
+    e.stopPropagation();
+    if (selId === b.dataset.del) selId = null;
+    await admin("delitem", { id: b.dataset.del }); await load();
+  });
+  app.querySelectorAll("[data-ren]").forEach((el) => {
+    el.onclick = (e) => e.stopPropagation();
+    el.onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); el.blur(); } };
+    el.onblur = async () => { const it = st.items.find((i) => i.id === el.dataset.ren); if (it && it.name !== el.textContent.trim()) { await admin("renitem", { id: it.id, name: el.textContent }); await load(); } };
+  });
+  app.querySelectorAll(".card.ed").forEach((c) => c.onclick = () => { selId = selId === c.dataset.id ? null : c.dataset.id; render(); });
+}
+
+// Ctrl+V: 고른 카드에 사진 넣기, 안 골랐으면 새 항목
+document.addEventListener("paste", async (e) => {
+  if (!st || st.round || editing) return;
+  const file = [...(e.clipboardData.items || [])].find((i) => i.type.startsWith("image/"));
+  if (!file) return;
+  e.preventDefault();
+  let data;
+  try { data = await shrink(file.getAsFile()); } catch { err = "사진을 못 읽었어요"; return render(); }
+  if (selId && st.items.some((i) => i.id === selId)) await admin("imgitem", { id: selId, img: data });
+  else await admin("additem", { name: "", img: data });
+  await load();
+});
+
 function render() {
   if (editing) return renderEdit();
   const r = st.round;
   const alive = st.items.filter((i) => st.alive.includes(i.id));
   const n = alive.length;
   let html = `<div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-end">
-    <h1>우리 반 <span>반티</span> 투표 👕</h1>
-    <div class="join">입장: <b>is.gd/banti63</b> → 번호 입력</div></div>`;
+    <h1>우리 반 <span>투표</span> 🗳️${!r ? `<div><input id="topic" class="topicin" placeholder="무엇을 정하나요? (눌러서 쓰기)" value="${esc(st.topic || "")}"></div>` : st.topic ? `<div class="topic">${esc(st.topic)}</div>` : ""}</h1>
+    <div class="join">입장: <b>${JOIN}</b> → 번호 입력</div></div>`;
 
-  if (n === 1 && !r) {
+  if (n === 1 && !r && st.history.length) {
     const w = alive[0];
-    html += `<div class="center"><div class="big">🎉 우리 반 반티는</div>
-      <div class="card" style="width:min(360px,80vw)"><div class="img" style="${img(w.img)}"></div><div class="name" style="font-size:32px">${esc(w.name)}</div></div>
+    html += `<div class="center"><div class="big">🎉 1등은</div>
+      <div class="card ${w.img ? "" : "noimg"}" style="width:min(360px,80vw)">${w.img ? `<div class="img" style="${img(w.img)}"></div>` : ""}<div class="name" style="font-size:32px">${esc(w.name)}</div></div>
       <button id="announce">${st.announced ? "아이들 화면에서 가리기" : "📣 아이들에게 발표하기"}</button>
       <p class="sub">${st.announced ? "아이들 화면에 1등이 떠 있어요" : "아직 아이들 화면에는 안 보여요"}</p></div>`;
   } else if (!r) {
@@ -132,15 +205,18 @@ function render() {
     const defMode = n > 5 ? "exclude" : "pick";
     const defKeep = n > 5 ? n - 3 : n > 2 ? 2 : 1;
     const defPicks = n > 5 ? 3 : 1;
-    html += `<p class="sub">남은 반티 ${n}개 · ${st.roundNo + 1}라운드 준비</p>
+    html += `<p class="sub">남은 항목 ${n}개 · ${st.roundNo + 1}라운드 준비</p>
       <div class="panel">
         <label>방식 <select id="mode"><option value="exclude" ${defMode === "exclude" ? "selected" : ""}>빼고 싶은 것 고르기 (제외 투표)</option><option value="pick" ${defMode === "pick" ? "selected" : ""}>좋은 것 고르기</option></select></label>
         <label>한 명이 <input id="picks" type="number" min="1" max="${n - 1}" value="${defPicks}" style="width:70px">개 고르기</label>
         <label>끝나면 <input id="keep" type="number" min="1" max="${n - 1}" value="${defKeep}" style="width:70px">개 남기기</label>
         <button id="start">${st.roundNo + 1}라운드 시작</button>
-        <button class="ghost" id="edit">항목 고치기</button>
       </div>
-      <div class="grid">${alive.map((it) => `<div class="card"><div class="img" style="${img(it.img)}"></div><div class="name">${esc(it.name)}</div></div>`).join("")}</div>`;
+      <p class="hint">카드를 누르고 Ctrl+V 하면 복사한 사진이 들어가요. 아무 카드도 안 고르고 Ctrl+V 하면 그 사진으로 새 항목이 생겨요. 이름은 눌러서 고쳐요.</p>
+      <div class="grid">${alive.map((it) => `<div class="card ed ${it.img ? "" : "noimg"} ${selId === it.id ? "on" : ""}" data-id="${it.id}">
+        <button class="x" data-del="${it.id}" title="지우기">✕</button>
+        ${it.img ? `<div class="img" style="${img(it.img)}"></div>` : ""}<div class="name" contenteditable="true" data-ren="${it.id}">${esc(it.name || "")}</div></div>`).join("")}
+        <div class="card add"><div class="big" style="font-size:22px">+ 추가</div><input id="addname" placeholder="이름 치고 Enter"></div></div>`;
   } else {
     const ex = r.mode === "exclude";
     const label = n === 2 && !ex ? "양자택일" : ex ? `빼고 싶은 것 ${r.picks}개 고르기` : `좋은 것 ${r.picks}개 고르기`;
@@ -152,7 +228,7 @@ function render() {
       </div>
       <div class="nums">${Array.from({ length: st.total + 1 }, (_, i) => i).map((k) => `<span class="${st.votedNums.includes(k) ? "on" : ""}">${k}</span>`).join("")}</div>`;
     if (true) {
-      html += (!r.open ? `<p class="sub" style="margin-top:16px">✅ = 남는 반티. 줄을 누르면 남김/뺌을 바꿀 수 있어요${r.proposal.ties.length ? " (동점 있음 — 직접 골라 주세요)" : ""}.</p>` : "") + results(r);
+      html += (!r.open ? `<p class="sub" style="margin-top:16px">✅ = 남는 항목. 줄을 누르면 남김/뺌을 바꿀 수 있어요${r.proposal.ties.length ? " (동점 있음 — 직접 골라 주세요)" : ""}.</p>` : "") + results(r);
     } else {
       html += "";
     }
@@ -171,8 +247,7 @@ function render() {
   on("start", () => admin("start", { mode: document.getElementById("mode").value, picks: Number(document.getElementById("picks").value), keep: Number(document.getElementById("keep").value), }));
   on("close", () => admin("close"));
   on("announce", () => admin("announce"));
-  const ed = document.getElementById("edit");
-  if (ed) ed.onclick = () => { draft = st.items.map((i) => ({ ...i })); editing = true; err = ""; render(); };
+  bindEdit();
   on("next", () => admin("next"));
   on("reopen", () => admin("reopen"));
   const rs = document.getElementById("reset");

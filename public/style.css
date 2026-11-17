@@ -35,3 +35,6 @@ input, select { font:inherit; background:var(--card); color:var(--fg); border:1p
 .row .ct { font-weight:800; font-size:22px; text-align:right; }
 .row.out { opacity:.35; }
 .row.keep .nm::after { content:" ✅"; }
+
+.card.noimg .name { flex:1; min-height:120px; display:grid; place-items:center; font-size:24px; padding:16px 10px; }
+.topic { font-family:"Noto Sans KR", sans-serif; font-weight:800; font-size:clamp(18px, 3vw, 26px); color:var(--sub); margin-top:4px; }
