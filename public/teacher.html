@@ -25,8 +25,8 @@
 <script>
 const app = document.getElementById("app");
 let key = null;
-try { key = new URLSearchParams(location.search).get("key") || localStorage.getItem("vote-key") || "open"; } catch {}
-let st = null, err = "";
+try { key = new URLSearchParams(location.search).get("key") || localStorage.getItem("vote-key"); } catch {}
+let st = null, err = "", editing = false, draft = [];
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const img = (u) => `background-image:url('${encodeURI(u)}')`;
 const joinUrl = location.origin;
@@ -41,19 +41,32 @@ async function admin(action, extra = {}) {
 
 async function first() {
   const pub = await (await fetch("/api/state")).json();
+  if (pub.ready && !pub.hasPin) {
+    app.innerHTML = `<div class="center"><h1>반티 투표 · <span>선생님</span></h1>
+      <div class="big">선생님 비밀번호를 정해 주세요</div><p class="sub">4자 이상. 이 브라우저는 기억해요</p>
+      <input id="k" type="password" style="width:260px;text-align:center"><button id="go">정하기</button><span class="err" id="e"></span></div>`;
+    document.getElementById("go").onclick = async () => {
+      const d = await admin("setpin", { pin: document.getElementById("k").value.trim() });
+      if (d.key) { key = d.key; save(); load(); } else document.getElementById("e").textContent = err;
+    };
+    return;
+  }
   if (pub.ready && !key) {
     app.innerHTML = `<div class="center"><h1>반티 투표 · <span>선생님</span></h1>
-      <div class="big">이미 만든 투표가 있어요. 열쇠를 넣어 주세요</div>
-      <input id="k" style="width:260px;text-align:center"><button id="go">들어가기</button></div>`;
-    document.getElementById("go").onclick = () => { key = document.getElementById("k").value.trim(); save(); load(); };
+      <div class="big">선생님 비밀번호</div>
+      <input id="k" type="password" style="width:260px;text-align:center"><button id="go">들어가기</button></div>`;
+    const go = () => { key = document.getElementById("k").value.trim(); save(); load(); };
+    document.getElementById("go").onclick = go;
+    document.getElementById("k").onkeydown = (e) => { if (e.key === "Enter") go(); };
     return;
   }
   if (!pub.ready) {
     app.innerHTML = `<div class="center"><h1>반티 투표 · <span>선생님</span></h1>
-      <div class="big">우리 반 인원</div><input id="t" type="number" value="23" style="width:120px;text-align:center;font-size:28px">
+      <div class="big">마지막 번호</div><input id="t" type="number" value="25" style="width:120px;text-align:center;font-size:28px">
+      <div class="big">선생님 비밀번호</div><input id="p" type="password" style="width:200px;text-align:center">
       <button id="mk">투표 만들기</button></div>`;
     document.getElementById("mk").onclick = async () => {
-      const d = await admin("create", { total: Number(document.getElementById("t").value) });
+      const d = await admin("create", { total: Number(document.getElementById("t").value), pin: document.getElementById("p").value.trim() });
       if (d.key) { key = d.key; save(); load(); } else alert(err);
     };
     return;
@@ -82,7 +95,25 @@ function results(r) {
   }).join("") + `</div>`;
 }
 
+function renderEdit() {
+  app.innerHTML = `<h1>투표 <span>항목</span> 고치기</h1>
+    <p class="sub">이름은 꼭, 사진 주소·쇼핑몰 주소는 있으면 넣어요. 새 항목은 남은 후보에 들어가요.</p>
+    <div id="rows">${draft.map((it, i) => `<div class="panel ed" data-i="${i}" style="margin-bottom:10px">
+      <div class="thumb" style="${it.img ? img(it.img) : ""};width:56px;height:56px;border-radius:10px;background-size:cover;background-position:center;background-color:#2a2d36"></div>
+      <input data-k="name" placeholder="이름" value="${esc(it.name)}" style="width:160px">
+      <input data-k="img" placeholder="사진 주소" value="${esc(it.img)}" style="flex:1;min-width:180px">
+      <input data-k="url" placeholder="쇼핑몰 주소" value="${esc(it.url)}" style="flex:1;min-width:180px">
+      <button class="ghost" data-del="${i}">지우기</button></div>`).join("")}</div>
+    <div class="panel"><button class="ghost" id="add">+ 항목 추가</button><button id="savei">저장</button><button class="ghost" id="cancel">취소</button><span class="err">${esc(err)}</span></div>`;
+  const sync = () => app.querySelectorAll(".ed").forEach((row) => { const it = draft[row.dataset.i]; row.querySelectorAll("input").forEach((inp) => it[inp.dataset.k] = inp.value); });
+  app.querySelectorAll("[data-del]").forEach((b) => b.onclick = () => { sync(); draft.splice(Number(b.dataset.del), 1); renderEdit(); });
+  document.getElementById("add").onclick = () => { sync(); draft.push({ id: "", name: "", img: "", url: "" }); renderEdit(); };
+  document.getElementById("cancel").onclick = () => { editing = false; err = ""; render(); };
+  document.getElementById("savei").onclick = async () => { sync(); await admin("items", { items: draft }); if (!err) { editing = false; await load(); } else renderEdit(); };
+}
+
 function render() {
+  if (editing) return renderEdit();
   const r = st.round;
   const alive = st.items.filter((i) => st.alive.includes(i.id));
   const n = alive.length;
@@ -93,7 +124,9 @@ function render() {
   if (n === 1 && !r) {
     const w = alive[0];
     html += `<div class="center"><div class="big">🎉 우리 반 반티는</div>
-      <div class="card" style="width:min(360px,80vw)"><div class="img" style="${img(w.img)}"></div><div class="name" style="font-size:32px">${esc(w.name)}</div></div></div>`;
+      <div class="card" style="width:min(360px,80vw)"><div class="img" style="${img(w.img)}"></div><div class="name" style="font-size:32px">${esc(w.name)}</div></div>
+      <button id="announce">${st.announced ? "아이들 화면에서 가리기" : "📣 아이들에게 발표하기"}</button>
+      <p class="sub">${st.announced ? "아이들 화면에 1등이 떠 있어요" : "아직 아이들 화면에는 안 보여요"}</p></div>`;
   } else if (!r) {
     // 다음 라운드 설정. 남은 수에 맞춰 기본값을 고른다 (8→5 제외, 5→2 선택, 2→1 양자택일)
     const defMode = n > 5 ? "exclude" : "pick";
@@ -104,8 +137,8 @@ function render() {
         <label>방식 <select id="mode"><option value="exclude" ${defMode === "exclude" ? "selected" : ""}>빼고 싶은 것 고르기 (제외 투표)</option><option value="pick" ${defMode === "pick" ? "selected" : ""}>좋은 것 고르기</option></select></label>
         <label>한 명이 <input id="picks" type="number" min="1" max="${n - 1}" value="${defPicks}" style="width:70px">개 고르기</label>
         <label>끝나면 <input id="keep" type="number" min="1" max="${n - 1}" value="${defKeep}" style="width:70px">개 남기기</label>
-        <label><input id="reveal" type="checkbox"> 투표 중에도 결과 보이기</label>
         <button id="start">${st.roundNo + 1}라운드 시작</button>
+        <button class="ghost" id="edit">항목 고치기</button>
       </div>
       <div class="grid">${alive.map((it) => `<div class="card"><div class="img" style="${img(it.img)}"></div><div class="name">${esc(it.name)}</div></div>`).join("")}</div>`;
   } else {
@@ -114,30 +147,32 @@ function render() {
     html += `<p class="sub"><b style="color:${ex ? "var(--bad)" : "var(--acc)"}">${r.n}라운드</b> · ${label} → ${r.keep}개 남김 · ${r.open ? "투표 중" : "마감"}</p>
       <div class="panel">
         <span class="big">${st.votedNums.length} / ${st.total}명</span>
-        ${r.open ? `<button id="close">마감하기</button><button class="ghost" id="reveal">${r.reveal ? "결과 가리기" : "결과 보이기"}</button>`
+        ${r.open ? `<button id="close">마감하기</button>`
                  : `<button id="next">이대로 다음 단계 (${r.proposal.survivors.length}개 남김)</button><button class="ghost" id="reopen">다시 열기</button>`}
       </div>
       <div class="nums">${Array.from({ length: st.total + 1 }, (_, i) => i).map((k) => `<span class="${st.votedNums.includes(k) ? "on" : ""}">${k}</span>`).join("")}</div>`;
-    if (!r.open || r.reveal) {
+    if (true) {
       html += (!r.open ? `<p class="sub" style="margin-top:16px">✅ = 남는 반티. 줄을 누르면 남김/뺌을 바꿀 수 있어요${r.proposal.ties.length ? " (동점 있음 — 직접 골라 주세요)" : ""}.</p>` : "") + results(r);
     } else {
-      html += `<div class="center" style="min-height:30vh"><div class="big">결과는 마감하면 보여요 🙈</div></div>`;
+      html += "";
     }
   }
 
   if (st.history.length) {
     html += `<div class="hist"><b>지난 라운드</b><ul>` + st.history.map((h) =>
       `<li>${h.n}라운드 (${h.mode === "exclude" ? "제외" : "선택"}, ${h.voted}명): ` +
-      Object.entries(h.counts).sort((a, b) => b[1] - a[1]).map(([id, c]) => `${esc(st.items.find((i) => i.id === id).name)} ${c}${h.survivors.includes(id) ? "" : " ✕"}`).join(" · ") + `</li>`).join("") + `</ul></div>`;
+      Object.entries(h.counts).sort((a, b) => b[1] - a[1]).map(([id, c]) => `${esc((st.items.find((i) => i.id === id) || { name: "(지운 항목)" }).name)} ${c}${h.survivors.includes(id) ? "" : " ✕"}`).join(" · ") + `</li>`).join("") + `</ul></div>`;
   }
-  html += `<div class="panel" style="margin-top:32px;opacity:.7"><span>열쇠: <b>${esc(key)}</b> (다른 컴에서 선생님 화면 열 때)</span>
+  html += `<div class="panel" style="margin-top:32px;opacity:.7"><span>아이들은 표 수를 못 봐요. 결과는 이 화면에만 보여요</span>
     <button class="ghost" id="reset">처음부터 다시</button><span class="err">${esc(err)}</span></div>`;
   app.innerHTML = html;
 
   const on = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = async () => { await fn(); await load(); }; };
-  on("start", () => admin("start", { mode: document.getElementById("mode").value, picks: Number(document.getElementById("picks").value), keep: Number(document.getElementById("keep").value), reveal: document.getElementById("reveal").checked }));
+  on("start", () => admin("start", { mode: document.getElementById("mode").value, picks: Number(document.getElementById("picks").value), keep: Number(document.getElementById("keep").value), }));
   on("close", () => admin("close"));
-  on("reveal", () => admin("reveal"));
+  on("announce", () => admin("announce"));
+  const ed = document.getElementById("edit");
+  if (ed) ed.onclick = () => { draft = st.items.map((i) => ({ ...i })); editing = true; err = ""; render(); };
   on("next", () => admin("next"));
   on("reopen", () => admin("reopen"));
   const rs = document.getElementById("reset");

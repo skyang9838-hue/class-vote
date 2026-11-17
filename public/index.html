@@ -67,6 +67,11 @@ function render() {
     bindOut(); return;
   }
   const r = st.round;
+  if (!r && st.items.length === 1) {
+    bar.style.display = "none";
+    app.innerHTML = header() + `<div class="center"><div class="big">투표 끝! 🥁</div><p class="sub">선생님이 결과를 발표할 때까지 기다려요</p></div>`;
+    bindOut(); return;
+  }
   if (!r) {
     bar.style.display = "none";
     app.innerHTML = header() + `<p class="sub">다음 투표를 기다려요 ⏳ 남은 반티 ${st.items.length}개</p>
@@ -77,12 +82,12 @@ function render() {
   const title = st.items.length === 2 && !ex ? "양자택일! 하나만 고르세요" : ex ? `빼고 싶은 반티 ${r.picks}개를 고르세요` : `마음에 드는 반티 ${r.picks}개를 고르세요`;
   if (!r.open) {
     bar.style.display = "none";
-    app.innerHTML = header() + `<p class="sub">${r.n}라운드 마감! ${ex ? "빼고 싶은 표" : "받은 표"}</p>` + (st.counts ? results(st.counts, r.mode) : "");
+    app.innerHTML = header() + `<div class="center"><div class="big">${r.n}라운드 마감! ⏳</div><p class="sub">선생님이 다음 단계를 열 때까지 기다려요</p></div>`;
     bindOut(); return;
   }
   app.innerHTML = header() + `<p class="sub"><b style="color:${ex ? "var(--bad)" : "var(--acc)"}">${r.n}라운드</b> · ${title}</p>
     <p class="sub" style="font-size:15px">사진을 눌러 고르고, ↗를 누르면 쇼핑몰에서 자세히 볼 수 있어요.</p>
-    <div class="grid">${st.items.map((it) => cardHtml(it, true, ex)).join("")}</div>` + (st.counts ? `<p class="sub" style="margin-top:24px">지금까지 결과 (${st.voted}명 참여)</p>` + results(st.counts, r.mode) : "");
+    <div class="grid">${st.items.map((it) => cardHtml(it, true, ex)).join("")}</div>`;
   bindOut();
   app.querySelectorAll(".card[data-id]").forEach((c) => c.onclick = (e) => {
     if (e.target.closest("a")) return;

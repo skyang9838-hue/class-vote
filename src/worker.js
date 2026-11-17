@@ -56,20 +56,21 @@ export class VoteRoom {
 
   async load() {
     if (!this.state) this.state = (await this.ctx.storage.get("s")) || null;
-    if (this.state) this.state.items = ITEMS;
+    if (this.state && !this.state.items) this.state.items = ITEMS;
     return this.state;
   }
   async save() {
     await this.ctx.storage.put("s", this.state);
   }
 
-  fresh(adminKey, total) {
+  fresh(pin, total, items = ITEMS) {
     return {
-      adminKey,
+      pin,
       total,
       title: "우리 반 반티 투표",
-      items: ITEMS,
-      alive: ITEMS.map((i) => i.id),
+      items,
+      alive: items.map((i) => i.id),
+      announced: false,
       round: null, // {n, mode, picks, keep, open, reveal, proposal}
       votes: {}, // 번호 -> [id]
       history: [],
@@ -85,12 +86,14 @@ export class VoteRoom {
       title: s.title,
       total: s.total,
       items: s.items.filter((i) => s.alive.includes(i.id)),
-      winner: s.alive.length === 1 && !r ? s.items.find((i) => i.id === s.alive[0]) : null,
-      round: r && { n: r.n, mode: r.mode, picks: r.picks, keep: r.keep, open: r.open, reveal: r.reveal },
+      hasPin: !!s.pin,
+      // 1등은 선생님이 "발표"를 눌러야 아이들 화면에 뜬다
+      winner: s.announced && s.alive.length === 1 && !r ? s.items.find((i) => i.id === s.alive[0]) : null,
+      round: r && { n: r.n, mode: r.mode, picks: r.picks, keep: r.keep, open: r.open },
       voted: Object.keys(s.votes).length,
       mine: num && s.votes[num] ? s.votes[num] : null,
     };
-    if (r && (r.reveal || !r.open)) out.counts = tally(s);
+    // 표 수는 아이들에게 보내지 않는다 (선생님만 봄)
     return out;
   }
 
@@ -104,10 +107,11 @@ export class VoteRoom {
     }
 
     if (req.method === "GET" && path === "/api/admin-state") {
-      if (!s) return json({ error: "투표가 없어요" }, 403);
+      if (!s || !s.pin || url.searchParams.get("key") !== s.pin) return json({ error: "비밀번호가 맞지 않아요" }, 403);
       const r = s.round;
       return json({
         ...s,
+        pin: undefined,
         adminKey: undefined,
         counts: r ? tally(s) : null,
         votedNums: Object.keys(s.votes).map(Number).sort((a, b) => a - b),
@@ -131,16 +135,28 @@ export class VoteRoom {
     if (path === "/api/admin") {
       const { action } = body;
       if (action === "create") {
-        if (s) return json({ ok: true, key: s.adminKey });
-        const key = randKey();
-        this.state = this.fresh(key, Math.max(1, Math.min(40, Number(body.total) || 23)));
+        if (s) return json({ error: "이미 투표가 있어요" }, 400);
+        const pin = String(body.pin || "").trim();
+        if (pin.length < 4) return json({ error: "비밀번호는 4자 이상" }, 400);
+        this.state = this.fresh(pin, Math.max(1, Math.min(40, Number(body.total) || 23)));
         await this.save();
-        return json({ ok: true, key });
+        return json({ ok: true, key: pin });
       }
-      if (!s) return json({ error: "투표가 없어요" }, 403);
+      if (action === "setpin") {
+        // 비밀번호가 아직 없는 투표에서 처음 한 번만 정한다
+        if (!s) return json({ error: "투표가 없어요" }, 400);
+        if (s.pin) return json({ error: "이미 비밀번호가 있어요" }, 400);
+        const pin = String(body.pin || "").trim();
+        if (pin.length < 4) return json({ error: "비밀번호는 4자 이상" }, 400);
+        s.pin = pin;
+        delete s.adminKey;
+        await this.save();
+        return json({ ok: true, key: pin });
+      }
+      if (!s || !s.pin || body.key !== s.pin) return json({ error: "비밀번호가 맞지 않아요" }, 403);
 
       if (action === "reset") {
-        this.state = this.fresh(s.adminKey, s.total);
+        this.state = this.fresh(s.pin, s.total, s.items);
       } else if (action === "total") {
         s.total = Math.max(1, Math.min(40, Number(body.total) || s.total));
       } else if (action === "start") {
@@ -152,8 +168,20 @@ export class VoteRoom {
         s.roundNo += 1;
         s.round = { n: s.roundNo, mode, picks, keep, open: true, reveal: !!body.reveal, proposal: null };
         s.votes = {};
-      } else if (action === "reveal") {
-        if (s.round) s.round.reveal = !s.round.reveal;
+      } else if (action === "announce") {
+        s.announced = !s.announced;
+      } else if (action === "items") {
+        // 항목 편집: 투표 중이 아닐 때만. 새 항목은 남은 후보에 넣고, 지운 항목은 뺀다
+        if (s.round) return json({ error: "라운드가 끝난 뒤에 고칠 수 있어요" }, 400);
+        const list = (Array.isArray(body.items) ? body.items : [])
+          .map((i) => ({ id: String(i.id || "").slice(0, 40), name: String(i.name || "").trim().slice(0, 40), url: String(i.url || "").trim().slice(0, 500), img: String(i.img || "").trim().slice(0, 1000) }))
+          .filter((i) => i.name);
+        if (list.length < 2) return json({ error: "항목은 2개 이상" }, 400);
+        const seen = new Set();
+        for (const i of list) { if (!i.id || seen.has(i.id)) i.id = "i" + randKey().slice(0, 8); seen.add(i.id); }
+        const old = new Set(s.items.map((i) => i.id));
+        s.alive = list.filter((i) => !old.has(i.id) || s.alive.includes(i.id)).map((i) => i.id);
+        s.items = list;
       } else if (action === "close") {
         if (!s.round || !s.round.open) return json({ error: "열린 라운드가 없어요" }, 400);
         s.round.open = false;
