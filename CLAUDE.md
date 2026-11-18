@@ -3,6 +3,7 @@
 **무엇**: 반 투표 웹앱(처음엔 반티용). 아이들은 번호로 입장(https://is.gd/vote63, 옛 banti63도 같은 곳), 선생님은 `/teacher`에서 라운드(제외 투표 / 선택 투표 / 양자택일)를 열고 마감하고 통계를 본다.
 
 **지금 상태** (2026-11-16): 첫 판 배포. https://class-vote.class-soccer.workers.dev · 후보 8개는 `src/items.js`.
+- 11/18: 선생님 화면에 「누가 뭘 골랐나 보기」(항목별 번호 + 안 낸 번호, 기본 숨김)와 「결과 숨기기/보이기」(표 수·막대·지난 라운드, 기본 보임) 추가. 브라우저 localStorage에 기억. 서버 변경 없음(admin-state의 votes를 씀). **아직 배포 안 함 → 다음에 deploy 필요.**
 
 **주의**
 - 배포는 `npx wrangler deploy` (Cloudflare Workers + Durable Object 하나 "main"). GitHub push만으로는 배포 안 됨. 이 컴은 class-soccer의 wrangler로 돌림: `node ..\class-soccer\node_modules\wrangler\bin\wrangler.js deploy`.
